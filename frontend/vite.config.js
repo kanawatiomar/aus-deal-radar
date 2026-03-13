@@ -5,6 +5,9 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   base: "./",
+  define: {
+    "process.env.NODE_ENV": JSON.stringify("production"),
+  },
   plugins: [react()],
   build: {
     outDir: path.resolve(__dirname, "../app/web/static/flight-tracker"),

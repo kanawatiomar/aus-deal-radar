@@ -217,9 +217,8 @@ def copy_assets() -> None:
     shutil.copy2(ROOT / "app" / "web" / "static" / "app.js", ASSETS_DIR / "app.js")
     tracker_source = ROOT / "app" / "web" / "static" / "flight-tracker"
     tracker_target = ASSETS_DIR / "flight-tracker"
-    if tracker_target.exists():
-        shutil.rmtree(tracker_target)
-    shutil.copytree(tracker_source, tracker_target)
+    tracker_target.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(tracker_source, tracker_target, dirs_exist_ok=True)
 
 
 async def main() -> None:
