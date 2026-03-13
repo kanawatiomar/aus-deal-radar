@@ -26,6 +26,27 @@ const money = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
+const CONTINENT_POLYGONS = [
+  [[-168, 72], [-155, 60], [-145, 58], [-134, 55], [-126, 50], [-124, 43], [-120, 35], [-116, 30], [-111, 24], [-104, 20], [-96, 18], [-89, 19], [-84, 24], [-80, 29], [-77, 38], [-71, 45], [-63, 49], [-58, 55], [-61, 61], [-72, 68], [-92, 74], [-120, 77], [-147, 76]],
+  [[-82, 12], [-77, 7], [-74, -2], [-76, -13], [-74, -22], [-71, -31], [-67, -40], [-62, -52], [-55, -54], [-48, -44], [-43, -32], [-39, -18], [-43, -7], [-47, 1], [-55, 7], [-66, 10]],
+  [[-54, 59], [-42, 61], [-30, 69], [-24, 77], [-33, 83], [-48, 82], [-58, 75], [-61, 67]],
+  [[-12, 35], [-4, 43], [8, 48], [22, 52], [40, 56], [58, 58], [76, 57], [94, 56], [114, 52], [132, 50], [148, 55], [166, 60], [176, 68], [160, 72], [132, 70], [98, 73], [66, 74], [40, 68], [26, 61], [18, 55], [6, 54], [-7, 51], [-18, 57], [-28, 63], [-18, 50], [-12, 41]],
+  [[-17, 37], [-5, 34], [10, 35], [23, 32], [34, 26], [41, 13], [51, 10], [49, 2], [43, -11], [40, -20], [33, -30], [23, -35], [12, -34], [2, -27], [-4, -15], [-8, -2], [-13, 12], [-15, 24]],
+  [[111, -11], [114, -22], [121, -33], [132, -38], [145, -37], [153, -28], [151, -17], [143, -11], [132, -11], [121, -14]],
+  [[48, -13], [50, -17], [48, -22], [45, -25], [43, -20], [45, -15]],
+  [[140, 35], [144, 42], [146, 45], [141, 46], [137, 42], [136, 37]],
+  [[95, 7], [104, 16], [115, 20], [123, 15], [120, 6], [112, 0], [103, 1]],
+];
+
+function normalizeVector(vector) {
+  const length = Math.hypot(vector.x, vector.y, vector.z) || 1;
+  return {
+    x: vector.x / length,
+    y: vector.y / length,
+    z: vector.z / length,
+  };
+}
+
 class FlightGlobe {
   constructor(canvas, onFocusChange) {
     this.canvas = canvas;
@@ -37,8 +58,21 @@ class FlightGlobe {
     this.targetRotationY = -0.6;
     this.tilt = -0.35;
     this.targetTilt = -0.35;
-    this.starfield = this.buildStars(180);
+    this.starfield = this.buildStars(240);
+    this.landPoints = this.buildLandPoints();
+    this.coastPoints = this.buildCoastPoints();
+    this.cloudPoints = this.buildCloudPoints();
+    this.cityLights = this.buildCityLights();
+    this.lightVector = normalizeVector({ x: -0.62, y: 0.28, z: 0.74 });
+    this.cloudDrift = 0;
+    this.lastTimestamp = 0;
+    this.dragging = false;
+    this.pointerId = null;
+    this.dragStartX = 0;
+    this.dragStartY = 0;
     this.resize();
+    this.bindPointerEvents();
+    this.canvas.style.cursor = "grab";
     window.addEventListener("resize", () => this.resize());
     requestAnimationFrame((time) => this.render(time));
   }
@@ -47,9 +81,172 @@ class FlightGlobe {
     return Array.from({ length: total }, () => ({
       x: Math.random(),
       y: Math.random(),
-      radius: 0.35 + Math.random() * 1.8,
-      alpha: 0.2 + Math.random() * 0.7,
+      depth: 0.3 + Math.random() * 0.9,
+      radius: 0.25 + Math.random() * 1.9,
+      alpha: 0.18 + Math.random() * 0.8,
     }));
+  }
+
+  buildLandPoints() {
+    const points = [];
+    for (let lat = -56; lat <= 82; lat += 2.15) {
+      for (let lon = -180; lon <= 180; lon += 2.15) {
+        if (!this.isLand(lon, lat)) {
+          continue;
+        }
+        const noiseA = Math.sin((lon + 30) * 0.065) + Math.cos((lat - 4) * 0.18);
+        const noiseB = Math.sin((lon - lat) * 0.115) + Math.cos((lon + lat) * 0.035);
+        const elevation = (noiseA * 0.42 + noiseB * 0.3 + 1.7) / 2.42;
+        const moisture = (Math.cos((lon - 20) * 0.055) + Math.sin(lat * 0.19) + 1.8) / 2.8;
+        points.push({
+          vector: this.latLonToVector(
+            lat + Math.cos((lon - lat) * 0.12) * 0.38,
+            lon + Math.sin((lon + lat) * 0.07) * 0.42,
+          ),
+          elevation,
+          moisture,
+          size: 0.8 + Math.max(0, elevation) * 1.2,
+        });
+      }
+    }
+    return points;
+  }
+
+  buildCoastPoints() {
+    const points = [];
+    for (const polygon of CONTINENT_POLYGONS) {
+      for (let index = 0; index < polygon.length; index += 1) {
+        const current = polygon[index];
+        const next = polygon[(index + 1) % polygon.length];
+        const distance = Math.hypot(next[0] - current[0], next[1] - current[1]);
+        const steps = Math.max(3, Math.ceil(distance / 3));
+        for (let step = 0; step <= steps; step += 1) {
+          const t = step / steps;
+          const lon = current[0] + (next[0] - current[0]) * t;
+          const lat = current[1] + (next[1] - current[1]) * t;
+          points.push({
+            vector: this.latLonToVector(lat, lon),
+            size: 1.25 + Math.sin((lon + lat) * 0.3) * 0.25,
+          });
+        }
+      }
+    }
+    return points;
+  }
+
+  buildCloudPoints() {
+    const points = [];
+    for (let lat = -66; lat <= 74; lat += 2.8) {
+      for (let lon = -180; lon <= 180; lon += 3.4) {
+        const density =
+          Math.sin((lon + 60) * 0.075)
+          + Math.cos((lat - 8) * 0.22)
+          + Math.sin((lon - lat) * 0.09)
+          + Math.cos((lon * 0.028) + (lat * 0.11));
+        if (density < 1.55) {
+          continue;
+        }
+        points.push({
+          lat,
+          lon,
+          size: 1.1 + ((density - 1.55) * 1.8),
+          alpha: 0.18 + ((density - 1.55) * 0.12),
+        });
+      }
+    }
+    return points;
+  }
+
+  buildCityLights() {
+    const points = [];
+    for (let lat = -48; lat <= 64; lat += 2.55) {
+      for (let lon = -180; lon <= 180; lon += 2.55) {
+        if (!this.isLand(lon, lat)) {
+          continue;
+        }
+        const urbanity =
+          Math.sin((lon + 24) * 0.12)
+          + Math.cos((lat - 7) * 0.22)
+          + Math.sin((lon - lat) * 0.085);
+        const temperateBand = 1 - Math.min(1, Math.abs(lat) / 78);
+        const density = urbanity + (temperateBand * 1.05);
+        if (density < 1.45) {
+          continue;
+        }
+        points.push({
+          vector: this.latLonToVector(
+            lat + Math.sin((lon + lat) * 0.17) * 0.22,
+            lon + Math.cos((lon - lat) * 0.13) * 0.22,
+          ),
+          size: 0.7 + ((density - 1.45) * 1.2),
+          alpha: 0.12 + ((density - 1.45) * 0.1),
+        });
+      }
+    }
+    return points;
+  }
+
+  bindPointerEvents() {
+    this.canvas.style.touchAction = "none";
+    this.canvas.addEventListener("pointerdown", (event) => {
+      this.dragging = true;
+      this.pointerId = event.pointerId;
+      this.dragStartX = event.clientX;
+      this.dragStartY = event.clientY;
+      this.canvas.style.cursor = "grabbing";
+      this.canvas.setPointerCapture(event.pointerId);
+    });
+    this.canvas.addEventListener("pointermove", (event) => {
+      if (!this.dragging || event.pointerId !== this.pointerId) {
+        return;
+      }
+      const dx = event.clientX - this.dragStartX;
+      const dy = event.clientY - this.dragStartY;
+      this.dragStartX = event.clientX;
+      this.dragStartY = event.clientY;
+      this.targetRotationY += dx * 0.0062;
+      this.targetTilt = Math.max(-1.05, Math.min(0.18, this.targetTilt + dy * 0.0035));
+      state.userPinnedFocus = true;
+    });
+    this.canvas.addEventListener("pointerup", (event) => {
+      if (event.pointerId !== this.pointerId) {
+        return;
+      }
+      this.dragging = false;
+      this.canvas.style.cursor = "grab";
+      this.canvas.releasePointerCapture(event.pointerId);
+      this.pointerId = null;
+    });
+    this.canvas.addEventListener("pointercancel", () => {
+      this.dragging = false;
+      this.pointerId = null;
+      this.canvas.style.cursor = "grab";
+    });
+    this.canvas.addEventListener("pointerleave", () => {
+      this.dragging = false;
+      this.pointerId = null;
+      this.canvas.style.cursor = "grab";
+    });
+  }
+
+  isLand(lon, lat) {
+    return CONTINENT_POLYGONS.some((polygon) => this.pointInPolygon(lon, lat, polygon));
+  }
+
+  pointInPolygon(lon, lat, polygon) {
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+      const xi = polygon[i][0];
+      const yi = polygon[i][1];
+      const xj = polygon[j][0];
+      const yj = polygon[j][1];
+      const intersects = ((yi > lat) !== (yj > lat))
+        && (lon < ((xj - xi) * (lat - yi)) / ((yj - yi) || 0.00001) + xi);
+      if (intersects) {
+        inside = !inside;
+      }
+    }
+    return inside;
   }
 
   resize() {
@@ -62,7 +259,7 @@ class FlightGlobe {
     this.height = bounds.height;
     this.centerX = bounds.width / 2;
     this.centerY = bounds.height / 2;
-    this.radius = Math.min(bounds.width, bounds.height) * 0.31;
+    this.radius = Math.min(bounds.width, bounds.height) * 0.355;
   }
 
   setFlights(flights, focusAlertKey) {
@@ -182,26 +379,70 @@ class FlightGlobe {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.width, this.height);
 
+    const dt = this.lastTimestamp ? Math.min(40, timestamp - this.lastTimestamp) : 16;
+    this.lastTimestamp = timestamp;
     this.rotationY += (this.targetRotationY - this.rotationY) * 0.025;
     this.tilt += (this.targetTilt - this.tilt) * 0.03;
+    this.cloudDrift += dt * 0.0016;
 
+    this.drawDeepSpace(timestamp);
     this.drawStars(timestamp);
     this.drawAtmosphere();
-    this.drawBackRoutes(timestamp);
     this.drawGlobe();
-    this.drawGrid();
+    this.drawNightMask();
+    this.drawSurface();
+    this.drawBackRoutes(timestamp);
     this.drawFrontRoutes(timestamp);
     this.drawMarkers(timestamp);
+    this.drawRimLight();
 
     requestAnimationFrame((time) => this.render(time));
   }
 
+  drawDeepSpace(timestamp) {
+    const haze = this.ctx.createRadialGradient(
+      this.width * 0.18,
+      this.height * 0.1,
+      20,
+      this.width * 0.18,
+      this.height * 0.1,
+      this.width * 0.8,
+    );
+    haze.addColorStop(0, "rgba(61, 126, 188, 0.16)");
+    haze.addColorStop(0.42, "rgba(14, 36, 61, 0.08)");
+    haze.addColorStop(1, "rgba(3, 7, 12, 0)");
+    this.ctx.fillStyle = haze;
+    this.ctx.fillRect(0, 0, this.width, this.height);
+
+    const ember = this.ctx.createRadialGradient(
+      this.width * 0.84,
+      this.height * 0.16,
+      12,
+      this.width * 0.84,
+      this.height * 0.16,
+      this.width * 0.35,
+    );
+    ember.addColorStop(0, "rgba(255, 154, 78, 0.16)");
+    ember.addColorStop(0.4, "rgba(255, 154, 78, 0.04)");
+    ember.addColorStop(1, "rgba(255, 154, 78, 0)");
+    this.ctx.fillStyle = ember;
+    this.ctx.fillRect(0, 0, this.width, this.height);
+
+    this.ctx.beginPath();
+    this.ctx.strokeStyle = `rgba(255, 255, 255, ${0.06 + Math.sin(timestamp * 0.00028) * 0.02})`;
+    this.ctx.lineWidth = 1;
+    this.ctx.arc(this.centerX, this.centerY + this.radius * 0.04, this.radius * 1.28, Math.PI * 1.12, Math.PI * 1.88);
+    this.ctx.stroke();
+  }
+
   drawStars(timestamp) {
     for (const star of this.starfield) {
-      const pulse = 0.75 + Math.sin(timestamp * 0.0005 + star.x * 10) * 0.25;
+      const driftX = Math.sin((timestamp * 0.00006) + (star.y * 8)) * star.depth * 6;
+      const driftY = Math.cos((timestamp * 0.00004) + (star.x * 9)) * star.depth * 4;
+      const pulse = 0.72 + Math.sin(timestamp * 0.0005 + star.x * 10) * 0.28;
       this.ctx.beginPath();
       this.ctx.fillStyle = `rgba(255, 255, 255, ${star.alpha * pulse})`;
-      this.ctx.arc(star.x * this.width, star.y * this.height, star.radius, 0, Math.PI * 2);
+      this.ctx.arc((star.x * this.width) + driftX, (star.y * this.height) + driftY, star.radius, 0, Math.PI * 2);
       this.ctx.fill();
     }
   }
@@ -216,38 +457,223 @@ class FlightGlobe {
       this.radius * 1.34,
     );
     glow.addColorStop(0, "rgba(38, 94, 139, 0.00)");
-    glow.addColorStop(0.65, "rgba(30, 103, 169, 0.14)");
-    glow.addColorStop(1, "rgba(107, 230, 217, 0.12)");
+    glow.addColorStop(0.55, "rgba(41, 118, 178, 0.18)");
+    glow.addColorStop(0.86, "rgba(107, 230, 217, 0.18)");
+    glow.addColorStop(1, "rgba(107, 230, 217, 0.05)");
     this.ctx.beginPath();
     this.ctx.fillStyle = glow;
-    this.ctx.arc(this.centerX, this.centerY, this.radius * 1.36, 0, Math.PI * 2);
+    this.ctx.arc(this.centerX, this.centerY, this.radius * 1.42, 0, Math.PI * 2);
     this.ctx.fill();
   }
 
   drawGlobe() {
+    const lightX = this.centerX + (this.lightVector.x * this.radius * 0.45);
+    const lightY = this.centerY - (this.lightVector.y * this.radius * 0.35);
     const fill = this.ctx.createRadialGradient(
-      this.centerX - this.radius * 0.24,
-      this.centerY - this.radius * 0.3,
-      this.radius * 0.18,
+      lightX,
+      lightY,
+      this.radius * 0.08,
       this.centerX,
       this.centerY,
       this.radius,
     );
-    fill.addColorStop(0, "rgba(38, 95, 141, 0.92)");
-    fill.addColorStop(0.48, "rgba(11, 42, 72, 0.96)");
-    fill.addColorStop(1, "rgba(4, 18, 33, 1)");
+    fill.addColorStop(0, "rgba(94, 168, 232, 0.92)");
+    fill.addColorStop(0.18, "rgba(35, 91, 148, 0.96)");
+    fill.addColorStop(0.55, "rgba(10, 44, 77, 0.98)");
+    fill.addColorStop(1, "rgba(3, 17, 31, 1)");
     this.ctx.beginPath();
     this.ctx.fillStyle = fill;
     this.ctx.arc(this.centerX, this.centerY, this.radius, 0, Math.PI * 2);
     this.ctx.fill();
+
+    const oceanHighlight = this.ctx.createRadialGradient(
+      lightX,
+      lightY,
+      this.radius * 0.02,
+      lightX,
+      lightY,
+      this.radius * 0.72,
+    );
+    oceanHighlight.addColorStop(0, "rgba(182, 223, 255, 0.34)");
+    oceanHighlight.addColorStop(0.42, "rgba(108, 181, 232, 0.13)");
+    oceanHighlight.addColorStop(1, "rgba(108, 181, 232, 0)");
+    this.ctx.beginPath();
+    this.ctx.fillStyle = oceanHighlight;
+    this.ctx.arc(this.centerX, this.centerY, this.radius, 0, Math.PI * 2);
+    this.ctx.fill();
   }
 
-  drawGrid() {
+  drawNightMask() {
+    const shadowX = this.centerX - (this.lightVector.x * this.radius * 0.52);
+    const shadowY = this.centerY + (this.lightVector.y * this.radius * 0.5);
     this.ctx.save();
     this.ctx.beginPath();
     this.ctx.arc(this.centerX, this.centerY, this.radius, 0, Math.PI * 2);
     this.ctx.clip();
+    const shadow = this.ctx.createRadialGradient(
+      shadowX,
+      shadowY,
+      this.radius * 0.12,
+      shadowX,
+      shadowY,
+      this.radius * 0.95,
+    );
+    shadow.addColorStop(0, "rgba(1, 8, 16, 0)");
+    shadow.addColorStop(0.48, "rgba(1, 8, 16, 0.24)");
+    shadow.addColorStop(1, "rgba(1, 6, 12, 0.78)");
+    this.ctx.fillStyle = shadow;
+    this.ctx.fillRect(
+      this.centerX - this.radius,
+      this.centerY - this.radius,
+      this.radius * 2,
+      this.radius * 2,
+    );
+    this.ctx.restore();
+  }
 
+  drawSurface() {
+    this.ctx.save();
+    this.ctx.beginPath();
+    this.ctx.arc(this.centerX, this.centerY, this.radius, 0, Math.PI * 2);
+    this.ctx.clip();
+    this.drawOceanBands();
+    this.drawLandMasses();
+    this.drawCityLights();
+    this.drawCloudLayer();
+    this.drawGrid();
+    this.ctx.restore();
+  }
+
+  drawOceanBands() {
+    this.ctx.strokeStyle = "rgba(115, 185, 235, 0.07)";
+    this.ctx.lineWidth = 1.4;
+    for (let index = 0; index < 4; index += 1) {
+      const offset = (index * 0.18) - 0.28;
+      this.ctx.beginPath();
+      this.ctx.ellipse(
+        this.centerX + (offset * this.radius * 0.42),
+        this.centerY + ((index - 1.5) * this.radius * 0.1),
+        this.radius * (0.8 - index * 0.07),
+        this.radius * (0.22 + index * 0.03),
+        index * 0.22,
+        0,
+        Math.PI * 2,
+      );
+      this.ctx.stroke();
+    }
+  }
+
+  drawLandMasses() {
+    const litPoints = [];
+    const coastPoints = [];
+
+    for (const point of this.landPoints) {
+      const projected = this.project(point.vector);
+      if (projected.z < -0.03) {
+        continue;
+      }
+      const brightness = this.surfaceBrightness(projected);
+      litPoints.push({ projected, point, brightness });
+    }
+
+    litPoints.sort((a, b) => a.projected.z - b.projected.z);
+    for (const entry of litPoints) {
+      const color = this.landColor(entry.point, entry.brightness);
+      this.ctx.beginPath();
+      this.ctx.fillStyle = color;
+      this.ctx.arc(
+        entry.projected.x,
+        entry.projected.y,
+        Math.max(0.6, entry.point.size * entry.projected.scale * 0.82),
+        0,
+        Math.PI * 2,
+      );
+      this.ctx.fill();
+    }
+
+    for (const point of this.coastPoints) {
+      const projected = this.project(point.vector);
+      if (projected.z < -0.02) {
+        continue;
+      }
+      const brightness = this.surfaceBrightness(projected);
+      if (brightness <= 0.06) {
+        continue;
+      }
+      coastPoints.push({ projected, point, brightness });
+    }
+
+    for (const entry of coastPoints) {
+      this.ctx.beginPath();
+      this.ctx.fillStyle = `rgba(169, 238, 209, ${0.12 + entry.brightness * 0.22})`;
+      this.ctx.arc(
+        entry.projected.x,
+        entry.projected.y,
+        Math.max(0.8, entry.point.size * entry.projected.scale * 0.68),
+        0,
+        Math.PI * 2,
+      );
+      this.ctx.fill();
+    }
+  }
+
+  drawCloudLayer() {
+    for (const point of this.cloudPoints) {
+      const vector = this.latLonToVector(point.lat, point.lon + this.cloudDrift);
+      const projected = this.project({
+        x: vector.x * 1.025,
+        y: vector.y * 1.025,
+        z: vector.z * 1.025,
+      });
+      if (projected.z < -0.03) {
+        continue;
+      }
+      const brightness = Math.max(0.14, this.surfaceBrightness(projected));
+      this.ctx.beginPath();
+      this.ctx.fillStyle = `rgba(235, 245, 255, ${point.alpha * brightness})`;
+      this.ctx.ellipse(
+        projected.x,
+        projected.y,
+        Math.max(1.2, point.size * projected.scale * 1.9),
+        Math.max(0.6, point.size * projected.scale * 0.85),
+        0,
+        0,
+        Math.PI * 2,
+      );
+      this.ctx.fill();
+    }
+  }
+
+  drawCityLights() {
+    this.ctx.save();
+    this.ctx.globalCompositeOperation = "screen";
+    for (const point of this.cityLights) {
+      const projected = this.project(point.vector);
+      if (projected.z < -0.01) {
+        continue;
+      }
+      const brightness = this.surfaceBrightness(projected);
+      const darkness = 1 - Math.min(1, brightness * 2.2);
+      if (darkness < 0.28) {
+        continue;
+      }
+      const radius = Math.max(0.65, point.size * projected.scale * 0.9);
+      this.ctx.beginPath();
+      this.ctx.fillStyle = `rgba(255, 195, 104, ${(point.alpha + 0.08) * darkness})`;
+      this.ctx.arc(projected.x, projected.y, radius, 0, Math.PI * 2);
+      this.ctx.fill();
+
+      if (darkness > 0.6) {
+        this.ctx.beginPath();
+        this.ctx.fillStyle = `rgba(255, 132, 54, ${point.alpha * 0.35 * darkness})`;
+        this.ctx.arc(projected.x, projected.y, radius * 1.85, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
+    }
+    this.ctx.restore();
+  }
+
+  drawGrid() {
     const latitudes = [-60, -30, 0, 30, 60];
     const longitudes = [-150, -120, -90, -60, -30, 0, 30, 60, 90, 120, 150];
 
@@ -257,7 +683,7 @@ class FlightGlobe {
           const lon = -180 + (index / 79) * 360;
           return this.latLonToVector(lat, lon);
         }),
-        "rgba(107, 230, 217, 0.11)",
+        "rgba(122, 194, 241, 0.08)",
       );
     }
 
@@ -267,11 +693,9 @@ class FlightGlobe {
           const lat = -90 + (index / 79) * 180;
           return this.latLonToVector(lat, lon);
         }),
-        "rgba(255, 255, 255, 0.08)",
+        "rgba(255, 255, 255, 0.05)",
       );
     }
-
-    this.ctx.restore();
   }
 
   drawWireLine(points, color) {
@@ -328,7 +752,7 @@ class FlightGlobe {
 
       this.ctx.strokeStyle = this.hexToRgba(route.color, alpha);
       this.ctx.lineWidth = lineWidth;
-      this.ctx.shadowBlur = frontOnly ? (isFocused ? 18 : 10) : 0;
+      this.ctx.shadowBlur = frontOnly ? (isFocused ? 22 : 12) : 0;
       this.ctx.shadowColor = frontOnly ? this.hexToRgba(route.color, 0.24) : "transparent";
       this.ctx.stroke();
       this.ctx.shadowBlur = 0;
@@ -356,9 +780,9 @@ class FlightGlobe {
       const isFocused = route.alert_key === this.focusAlertKey;
       const pulse = 1 + Math.sin(timestamp * 0.004 + route.index) * 0.12;
       this.ctx.beginPath();
-      this.ctx.strokeStyle = this.hexToRgba(route.color, isFocused ? 0.8 : 0.35);
+      this.ctx.strokeStyle = this.hexToRgba(route.color, isFocused ? 0.84 : 0.28);
       this.ctx.lineWidth = isFocused ? 2 : 1.1;
-      this.ctx.arc(projected.x, projected.y, (isFocused ? 10 : 7) * pulse, 0, Math.PI * 2);
+      this.ctx.arc(projected.x, projected.y, (isFocused ? 12 : 8) * pulse, 0, Math.PI * 2);
       this.ctx.stroke();
 
       this.ctx.beginPath();
@@ -376,9 +800,49 @@ class FlightGlobe {
       this.ctx.beginPath();
       this.ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
       this.ctx.lineWidth = 1.2;
-      this.ctx.arc(aus.x, aus.y, 12, 0, Math.PI * 2);
+      this.ctx.arc(aus.x, aus.y, 14, 0, Math.PI * 2);
       this.ctx.stroke();
     }
+  }
+
+  drawRimLight() {
+    this.ctx.beginPath();
+    this.ctx.strokeStyle = "rgba(157, 224, 255, 0.22)";
+    this.ctx.lineWidth = 2.2;
+    this.ctx.arc(this.centerX, this.centerY, this.radius + 1.5, Math.PI * 0.1, Math.PI * 1.62);
+    this.ctx.stroke();
+  }
+
+  surfaceBrightness(projected) {
+    return Math.max(
+      0,
+      (projected.x - this.centerX) / this.radius * this.lightVector.x
+      + (this.centerY - projected.y) / this.radius * this.lightVector.y
+      + projected.z * this.lightVector.z,
+    );
+  }
+
+  landColor(point, brightness) {
+    const light = 0.18 + (brightness * 0.84);
+    let r;
+    let g;
+    let b;
+
+    if (point.elevation > 0.82) {
+      r = 182;
+      g = 169;
+      b = 133;
+    } else if (point.elevation > 0.62) {
+      r = 96;
+      g = 126 + (point.moisture * 18);
+      b = 92;
+    } else {
+      r = 54 + (point.moisture * 18);
+      g = 94 + (point.moisture * 34);
+      b = 65 + (point.moisture * 16);
+    }
+
+    return `rgba(${Math.round(r * light)}, ${Math.round(g * light)}, ${Math.round(b * light)}, ${0.45 + brightness * 0.44})`;
   }
 
   hexToRgba(hex, alpha) {
