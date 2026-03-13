@@ -19,6 +19,20 @@ const cache = {
   siteData: null,
   trackerFlights: [],
 };
+const trackerElements = {
+  canvas: document.getElementById("alertGlobe"),
+  metrics: document.getElementById("trackerMetrics"),
+  list: document.getElementById("trackerList"),
+  headline: document.getElementById("trackerHeadline"),
+  subline: document.getElementById("trackerSubline"),
+};
+const trackerEnabled = Boolean(
+  trackerElements.canvas
+  && trackerElements.metrics
+  && trackerElements.list
+  && trackerElements.headline
+  && trackerElements.subline,
+);
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -855,11 +869,13 @@ class FlightGlobe {
   }
 }
 
-const globe = new FlightGlobe(document.getElementById("alertGlobe"), (alertKey) => {
-  state.focusAlertKey = alertKey;
-  renderTrackerList(cache.trackerFlights);
-  updateTrackerHud(cache.trackerFlights.find((item) => item.alert_key === alertKey));
-});
+const globe = trackerEnabled
+  ? new FlightGlobe(trackerElements.canvas, (alertKey) => {
+    state.focusAlertKey = alertKey;
+    renderTrackerList(cache.trackerFlights);
+    updateTrackerHud(cache.trackerFlights.find((item) => item.alert_key === alertKey));
+  })
+  : null;
 
 function renderSnapshotMode() {
   if (refreshEnabled) {
@@ -912,10 +928,12 @@ function applyFiltersAndRender() {
   renderCashTable(state.mode === "award" ? [] : filteredCash.slice(0, 18));
   renderAwardTable(state.mode === "cash" ? [] : filteredAwards.slice(0, 18));
   renderBonuses(cache.siteData.bonuses.slice(0, 8));
-  renderTrackerMetrics(filteredTracker);
-  renderTrackerList(filteredTracker);
-  updateTrackerHud(filteredTracker.find((item) => item.alert_key === state.focusAlertKey));
-  globe.setFlights(filteredTracker, state.focusAlertKey);
+  if (trackerEnabled && globe) {
+    renderTrackerMetrics(filteredTracker);
+    renderTrackerList(filteredTracker);
+    updateTrackerHud(filteredTracker.find((item) => item.alert_key === state.focusAlertKey));
+    globe.setFlights(filteredTracker, state.focusAlertKey);
+  }
 }
 
 function buildRadarBoard(cashDeals, awardDeals) {
@@ -957,7 +975,10 @@ function renderSummary(summary) {
 }
 
 function renderTrackerMetrics(items) {
-  const root = document.getElementById("trackerMetrics");
+  const root = trackerElements.metrics;
+  if (!root) {
+    return;
+  }
   const cash = items.filter((item) => item.kind === "cash").length;
   const award = items.filter((item) => item.kind === "award").length;
   const live = items.filter((item) => item.status === "live").length;
@@ -971,7 +992,10 @@ function renderTrackerMetrics(items) {
 }
 
 function renderTrackerList(items) {
-  const root = document.getElementById("trackerList");
+  const root = trackerElements.list;
+  if (!root) {
+    return;
+  }
   if (!items.length) {
     root.innerHTML = `
       <article class="tracker-card">
@@ -1001,7 +1025,7 @@ function renderTrackerList(items) {
     button.addEventListener("click", () => {
       state.focusAlertKey = button.dataset.alertKey;
       state.userPinnedFocus = true;
-      globe.focusOn(state.focusAlertKey);
+      globe?.focusOn(state.focusAlertKey);
       renderTrackerList(cache.trackerFlights);
       updateTrackerHud(cache.trackerFlights.find((item) => item.alert_key === state.focusAlertKey));
     });
@@ -1009,8 +1033,11 @@ function renderTrackerList(items) {
 }
 
 function updateTrackerHud(flight) {
-  const headline = document.getElementById("trackerHeadline");
-  const subline = document.getElementById("trackerSubline");
+  const headline = trackerElements.headline;
+  const subline = trackerElements.subline;
+  if (!headline || !subline) {
+    return;
+  }
   if (!flight) {
     headline.textContent = "No active alert trajectories";
     subline.textContent = "The globe is standing by for the next Austin deal burst.";
@@ -1114,17 +1141,19 @@ function wireFilters() {
 }
 
 function startAutoCycle() {
-  window.setInterval(() => {
-    if (state.userPinnedFocus || cache.trackerFlights.length < 2) {
-      return;
-    }
-    const currentIndex = cache.trackerFlights.findIndex((item) => item.alert_key === state.focusAlertKey);
-    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % cache.trackerFlights.length : 0;
-    state.focusAlertKey = cache.trackerFlights[nextIndex].alert_key;
-    globe.focusOn(state.focusAlertKey);
-    renderTrackerList(cache.trackerFlights);
-    updateTrackerHud(cache.trackerFlights[nextIndex]);
-  }, 7000);
+  if (trackerEnabled && globe) {
+    window.setInterval(() => {
+      if (state.userPinnedFocus || cache.trackerFlights.length < 2) {
+        return;
+      }
+      const currentIndex = cache.trackerFlights.findIndex((item) => item.alert_key === state.focusAlertKey);
+      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % cache.trackerFlights.length : 0;
+      state.focusAlertKey = cache.trackerFlights[nextIndex].alert_key;
+      globe.focusOn(state.focusAlertKey);
+      renderTrackerList(cache.trackerFlights);
+      updateTrackerHud(cache.trackerFlights[nextIndex]);
+    }, 7000);
+  }
 
   if (pollMs > 0) {
     window.setInterval(() => {

@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     amadeus_client_secret: str | None = None
     seats_aero_api_key: str | None = None
     seats_aero_take: int = 250
+    opensky_client_id: str | None = None
+    opensky_client_secret: str | None = None
+    opensky_cache_seconds: int = 12
 
     transfer_bonus_feeds: list[str] = Field(
         default_factory=lambda: [
@@ -73,6 +76,10 @@ class Settings(BaseSettings):
     @property
     def live_discord_enabled(self) -> bool:
         return bool(self.discord_bot_token and self.discord_user_id)
+
+    @property
+    def live_opensky_authenticated(self) -> bool:
+        return bool(self.opensky_client_id and self.opensky_client_secret)
 
     def prepare_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ request.url_for('static', path='styles.css') }}">
+  <link rel="stylesheet" href="{{ request.url_for('static', path='flight-tracker/flight-tracker.css') }}">
 </head>
 <body>
   <div class="backdrop"></div>
@@ -50,23 +51,10 @@
 
     <section class="globe-section">
       <div class="section-head">
-        <h2>Live Alert Globe</h2>
-        <p>3D Austin-centered tracker for every route currently tripping the alert engine.</p>
+        <h2>Live Flight Earth</h2>
+        <p>Real-time OpenSky aircraft traffic on a rotatable 3D Earth with altitude-aware motion.</p>
       </div>
-      <div class="globe-layout">
-        <div class="globe-stage">
-          <canvas id="alertGlobe" aria-label="3D alert globe"></canvas>
-          <div class="globe-hud">
-            <span class="hud-tag">Earth View</span>
-            <strong id="trackerHeadline">Booting alert globe...</strong>
-            <p id="trackerSubline">Waiting for live routes from the backend.</p>
-          </div>
-        </div>
-        <aside class="tracker-rail">
-          <div class="tracker-metrics" id="trackerMetrics"></div>
-          <div class="tracker-list" id="trackerList"></div>
-        </aside>
-      </div>
+      <div id="liveFlightTrackerRoot"></div>
     </section>
 
     <section class="filters">
@@ -173,7 +161,17 @@
       refreshEnabled: true,
       pollMs: 60000
     };
+    window.FLIGHT_TRACKER_CONFIG = {
+      sourceMode: "backend",
+      endpoint: "/api/live-aircraft",
+      snapshotEndpoint: null,
+      directUrl: "https://opensky-network.org/api/states/all",
+      defaultPreset: "world",
+      pollMs: 15000,
+      includeOnGround: false
+    };
   </script>
+  <script type="module" src="{{ request.url_for('static', path='flight-tracker/flight-tracker.js') }}"></script>
   <script src="{{ request.url_for('static', path='app.js') }}"></script>
 </body>
 </html>

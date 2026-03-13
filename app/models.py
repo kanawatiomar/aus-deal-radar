@@ -130,3 +130,40 @@ class SiteDataPayload(BaseModel):
     award_deals: list[AwardFare]
     bonuses: list[TransferBonus]
     tracker: TrackerPayload
+
+
+class LiveAircraftBounds(BaseModel):
+    preset: Literal["world", "north_america", "austin_corridor"]
+    label: str
+    lamin: float | None = None
+    lomin: float | None = None
+    lamax: float | None = None
+    lomax: float | None = None
+
+
+class LiveAircraftState(BaseModel):
+    icao24: str
+    callsign: str | None = None
+    origin_country: str
+    longitude: float
+    latitude: float
+    baro_altitude_m: float | None = None
+    geo_altitude_m: float | None = None
+    altitude_m: float | None = None
+    velocity_mps: float | None = None
+    heading_deg: float | None = None
+    vertical_rate_mps: float | None = None
+    on_ground: bool = False
+    last_contact: int
+    last_position_update: int | None = None
+    category: int | None = None
+
+
+class LiveAircraftPayload(BaseModel):
+    fetched_at: datetime
+    source: Literal["opensky", "snapshot", "demo"]
+    authenticated: bool = False
+    bounds: LiveAircraftBounds
+    total_states: int = 0
+    airborne_count: int = 0
+    aircraft: list[LiveAircraftState] = Field(default_factory=list)

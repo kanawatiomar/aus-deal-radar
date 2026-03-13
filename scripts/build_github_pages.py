@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 import shutil
 from pathlib import Path
 
 from app.config import get_settings
 from app.database import RadarDatabase
+from app.services.opensky import OpenSkyService
 from app.services.radar import DealRadarService
 
 
@@ -26,6 +28,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./assets/styles.css">
+  <link rel="stylesheet" href="./assets/flight-tracker/flight-tracker.css">
 </head>
 <body>
   <div class="backdrop"></div>
@@ -56,23 +59,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <section class="globe-section">
       <div class="section-head">
-        <h2>Live Alert Globe</h2>
-        <p>3D Austin-centered tracker for every route currently tripping the alert engine.</p>
+        <h2>Live Flight Earth</h2>
+        <p>Real-time OpenSky aircraft traffic on a rotatable 3D Earth with altitude-aware motion.</p>
       </div>
-      <div class="globe-layout">
-        <div class="globe-stage">
-          <canvas id="alertGlobe" aria-label="3D alert globe"></canvas>
-          <div class="globe-hud">
-            <span class="hud-tag">Earth View</span>
-            <strong id="trackerHeadline">Booting alert globe...</strong>
-            <p id="trackerSubline">Loading exported snapshot data.</p>
-          </div>
-        </div>
-        <aside class="tracker-rail">
-          <div class="tracker-metrics" id="trackerMetrics"></div>
-          <div class="tracker-list" id="trackerList"></div>
-        </aside>
-      </div>
+      <div id="liveFlightTrackerRoot"></div>
     </section>
 
     <section class="filters">
@@ -161,6 +151,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </section>
   </main>
   <script src="./config.js"></script>
+  <script type="module" src="./assets/flight-tracker/flight-tracker.js"></script>
   <script src="./assets/app.js"></script>
 </body>
 </html>
@@ -173,6 +164,15 @@ CONFIG_JS = """window.DASHBOARD_CONFIG = {
   },
   refreshEnabled: false,
   pollMs: 0
+};
+window.FLIGHT_TRACKER_CONFIG = {
+  sourceMode: "direct",
+  endpoint: null,
+  snapshotEndpoint: "./data/live-aircraft.json",
+  directUrl: "https://opensky-network.org/api/states/all",
+  defaultPreset: "world",
+  pollMs: 20000,
+  includeOnGround: false
 };
 """
 
@@ -191,9 +191,35 @@ async def export_snapshot() -> dict:
     return payload.model_dump(mode="json")
 
 
+async def export_live_aircraft() -> dict:
+    settings = get_settings()
+    service = OpenSkyService(settings)
+    try:
+        payload = await service.snapshot(preset="world")
+    finally:
+        await service.close()
+    return payload.model_dump(mode="json")
+
+
+def build_frontend_assets() -> None:
+    npm_executable = shutil.which("npm") or shutil.which("npm.cmd")
+    if not npm_executable:
+        raise FileNotFoundError("npm was not found in PATH. Run npm install --prefix frontend first.")
+    subprocess.run(
+        [npm_executable, "run", "build", "--prefix", "frontend"],
+        cwd=ROOT,
+        check=True,
+    )
+
+
 def copy_assets() -> None:
     shutil.copy2(ROOT / "app" / "web" / "static" / "styles.css", ASSETS_DIR / "styles.css")
     shutil.copy2(ROOT / "app" / "web" / "static" / "app.js", ASSETS_DIR / "app.js")
+    tracker_source = ROOT / "app" / "web" / "static" / "flight-tracker"
+    tracker_target = ASSETS_DIR / "flight-tracker"
+    if tracker_target.exists():
+        shutil.rmtree(tracker_target)
+    shutil.copytree(tracker_source, tracker_target)
 
 
 async def main() -> None:
@@ -201,13 +227,18 @@ async def main() -> None:
     ASSETS_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    snapshot = await export_snapshot()
+    build_frontend_assets()
+    snapshot, live_aircraft = await asyncio.gather(
+        export_snapshot(),
+        export_live_aircraft(),
+    )
     copy_assets()
 
     (DOCS_DIR / "index.html").write_text(HTML_TEMPLATE, encoding="utf-8")
     (DOCS_DIR / "config.js").write_text(CONFIG_JS, encoding="utf-8")
     (DOCS_DIR / ".nojekyll").write_text("", encoding="utf-8")
     (DATA_DIR / "site-data.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    (DATA_DIR / "live-aircraft.json").write_text(json.dumps(live_aircraft, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

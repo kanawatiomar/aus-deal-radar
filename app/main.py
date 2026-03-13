@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import get_settings
 from app.database import RadarDatabase
+from app.services.opensky import OpenSkyService
 from app.services.radar import DealRadarService
 
 
@@ -18,6 +19,7 @@ settings = get_settings()
 database = RadarDatabase(settings.database_path)
 database.init()
 radar = DealRadarService(settings, database)
+opensky = OpenSkyService(settings)
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -37,8 +39,10 @@ async def lifespan(app: FastAPI):
     )
     scheduler.start()
     app.state.radar = radar
+    app.state.opensky = opensky
     yield
     scheduler.shutdown(wait=False)
+    await opensky.close()
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -84,6 +88,14 @@ async def tracker(
     limit: int = Query(default=24, ge=4, le=60),
 ):
     return await radar.tracker(mode=mode, bank=bank, region=region, cabin=cabin, limit=limit)
+
+
+@app.get("/api/live-aircraft")
+async def live_aircraft(
+    preset: str = Query(default="world", pattern="^(world|north_america|austin_corridor)$"),
+    include_on_ground: bool = False,
+):
+    return await opensky.snapshot(preset=preset, include_on_ground=include_on_ground)
 
 
 @app.post("/api/refresh")
