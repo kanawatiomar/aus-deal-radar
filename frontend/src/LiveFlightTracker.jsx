@@ -666,12 +666,44 @@ export function LiveFlightTracker({ config }) {
   const [preset, setPreset] = useState(config.defaultPreset || "world");
   const [includeOnGround, setIncludeOnGround] = useState(Boolean(config.includeOnGround));
   const [selectedIcao, setSelectedIcao] = useState(null);
+  const [mobilePanel, setMobilePanel] = useState("earth");
+  const [isCompactLayout, setIsCompactLayout] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches,
+  );
   const trailHistoryRef = useRef(new Map());
   const feed = useAircraftFeed(config, preset, includeOnGround);
   const currentAircraft = feed.current?.aircraft || [];
   const previousAircraft = feed.previous?.aircraft || [];
   const deferredAircraft = useDeferredValue(currentAircraft);
   const lastUpdated = feed.current?.fetched_at ? new Date(feed.current.fetched_at) : null;
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia("(max-width: 760px)");
+    const syncCompactLayout = (event) => {
+      const matches = typeof event.matches === "boolean" ? event.matches : mediaQuery.matches;
+      setIsCompactLayout(matches);
+    };
+
+    syncCompactLayout(mediaQuery);
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncCompactLayout);
+      return () => mediaQuery.removeEventListener("change", syncCompactLayout);
+    }
+
+    mediaQuery.addListener(syncCompactLayout);
+    return () => mediaQuery.removeListener(syncCompactLayout);
+  }, []);
+
+  useEffect(() => {
+    if (!isCompactLayout) {
+      setMobilePanel("earth");
+    }
+  }, [isCompactLayout]);
 
   const aircraftByIcao = useMemo(
     () => new Map(currentAircraft.map((plane) => [plane.icao24, plane])),
@@ -750,6 +782,9 @@ export function LiveFlightTracker({ config }) {
     return { averageAltitude, maxSpeed, topAltitude };
   }, [currentAircraft]);
 
+  const showStage = !isCompactLayout || mobilePanel === "earth";
+  const showFeed = !isCompactLayout || mobilePanel === "feed";
+
   return (
     <div className="flight-tracker">
       <div className="flight-tracker__toolbar">
@@ -782,7 +817,31 @@ export function LiveFlightTracker({ config }) {
         </div>
       </div>
 
-      <div className="flight-tracker__layout">
+      {isCompactLayout ? (
+        <div className="flight-tracker__mobile-nav" role="tablist" aria-label="Live tracker views">
+          <button
+            aria-selected={mobilePanel === "earth"}
+            className={`flight-tracker__mobile-tab ${mobilePanel === "earth" ? "is-active" : ""}`}
+            onClick={() => setMobilePanel("earth")}
+            role="tab"
+            type="button"
+          >
+            Earth
+          </button>
+          <button
+            aria-selected={mobilePanel === "feed"}
+            className={`flight-tracker__mobile-tab ${mobilePanel === "feed" ? "is-active" : ""}`}
+            onClick={() => setMobilePanel("feed")}
+            role="tab"
+            type="button"
+          >
+            Feed
+          </button>
+        </div>
+      ) : null}
+
+      <div className={`flight-tracker__layout ${isCompactLayout ? `is-mobile-${mobilePanel}` : ""}`}>
+        {showStage ? (
         <div className="flight-tracker__stage">
           <div className="flight-tracker__stage-topbar">
             <span className={`flight-tracker__badge is-${feed.current?.source || "loading"}`}>
@@ -834,7 +893,9 @@ export function LiveFlightTracker({ config }) {
             <div className="flight-tracker__error-banner">{feed.error}</div>
           ) : null}
         </div>
+        ) : null}
 
+        {showFeed ? (
         <aside className="flight-tracker__sidebar">
           <div className="flight-tracker__stats">
             <article>
@@ -871,7 +932,12 @@ export function LiveFlightTracker({ config }) {
               <button
                 key={plane.icao24}
                 className={`flight-tracker__aircraft-card ${selectedIcao === plane.icao24 ? "is-active" : ""}`}
-                onClick={() => setSelectedIcao(plane.icao24)}
+                onClick={() => {
+                  setSelectedIcao(plane.icao24);
+                  if (isCompactLayout) {
+                    setMobilePanel("earth");
+                  }
+                }}
                 type="button"
               >
                 <header>
@@ -893,6 +959,7 @@ export function LiveFlightTracker({ config }) {
             ) : null}
           </div>
         </aside>
+        ) : null}
       </div>
     </div>
   );

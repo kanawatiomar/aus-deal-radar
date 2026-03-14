@@ -33,7 +33,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
   <div class="backdrop"></div>
   <main class="shell">
-    <section class="hero">
+    <section class="hero" data-mobile-page="overview">
       <div class="hero-copy">
         <p class="eyebrow">Austin Deal Radar</p>
         <h1>Flight steals, award sweet spots, and transfer bonus juice from AUS.</h1>
@@ -57,7 +57,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </section>
 
-    <section class="globe-section">
+    <nav class="mobile-page-nav" aria-label="Dashboard pages" role="tablist">
+      <button class="mobile-page-nav__button is-active" data-mobile-page-target="overview" role="tab" type="button">
+        <span>Overview</span>
+        <small>Board</small>
+      </button>
+      <button class="mobile-page-nav__button" data-mobile-page-target="live" role="tab" type="button">
+        <span>Live</span>
+        <small>Earth</small>
+      </button>
+      <button class="mobile-page-nav__button" data-mobile-page-target="deals" role="tab" type="button">
+        <span>Deals</span>
+        <small>Radar</small>
+      </button>
+      <button class="mobile-page-nav__button" data-mobile-page-target="bonuses" role="tab" type="button">
+        <span>Bonuses</span>
+        <small>Wire</small>
+      </button>
+    </nav>
+
+    <section class="globe-section" data-mobile-page="live">
       <div class="section-head">
         <h2>Live Flight Earth</h2>
         <p>Real-time OpenSky aircraft traffic on a rotatable 3D Earth with altitude-aware motion.</p>
@@ -65,7 +84,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div id="liveFlightTrackerRoot"></div>
     </section>
 
-    <section class="filters">
+    <section class="filters" data-mobile-page="deals">
       <div class="filter-group">
         <label for="modeFilter">View</label>
         <select id="modeFilter">
@@ -102,7 +121,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </section>
 
-    <section class="radar-section">
+    <section class="radar-section" data-mobile-page="deals">
       <div class="section-head">
         <h2>Radar Board</h2>
         <p>Top anomalies across cash and award pricing.</p>
@@ -110,7 +129,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div id="radarBoard" class="radar-grid"></div>
     </section>
 
-    <section class="data-grid">
+    <section class="data-grid" data-mobile-page="deals">
       <article class="table-card">
         <div class="section-head compact">
           <h2>Cash Tracker</h2>
@@ -142,7 +161,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </article>
     </section>
 
-    <section class="bonus-strip">
+    <section class="bonus-strip" data-mobile-page="bonuses">
       <div class="section-head">
         <h2>Transfer Bonus Wire</h2>
         <p>Recent Amex and Capital One bonus headlines caught by the feed watcher.</p>

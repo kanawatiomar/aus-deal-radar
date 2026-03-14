@@ -5,6 +5,9 @@ const endpoints = dashboardConfig.endpoints || {
 };
 const refreshEnabled = dashboardConfig.refreshEnabled !== false;
 const pollMs = dashboardConfig.pollMs || 0;
+const MOBILE_PAGE_QUERY = "(max-width: 820px)";
+const MOBILE_PAGES = new Set(["overview", "live", "deals", "bonuses"]);
+const mobilePageMedia = window.matchMedia(MOBILE_PAGE_QUERY);
 
 const state = {
   mode: "both",
@@ -13,6 +16,9 @@ const state = {
   cabin: "all",
   focusAlertKey: null,
   userPinnedFocus: false,
+  mobilePage: MOBILE_PAGES.has(window.location.hash.replace("#", ""))
+    ? window.location.hash.replace("#", "")
+    : "overview",
 };
 
 const cache = {
@@ -33,6 +39,8 @@ const trackerEnabled = Boolean(
   && trackerElements.headline
   && trackerElements.subline,
 );
+const mobilePageButtons = [...document.querySelectorAll("[data-mobile-page-target]")];
+const mobilePageSections = [...document.querySelectorAll("[data-mobile-page]")];
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -51,6 +59,46 @@ const CONTINENT_POLYGONS = [
   [[140, 35], [144, 42], [146, 45], [141, 46], [137, 42], [136, 37]],
   [[95, 7], [104, 16], [115, 20], [123, 15], [120, 6], [112, 0], [103, 1]],
 ];
+
+function normalizeMobilePage(page) {
+  return MOBILE_PAGES.has(page) ? page : "overview";
+}
+
+function syncMobilePages({ scroll = false, updateHash = false } = {}) {
+  const isMobile = mobilePageMedia.matches;
+  document.body.classList.toggle("mobile-pages-active", isMobile);
+
+  mobilePageButtons.forEach((button) => {
+    const active = state.mobilePage === button.dataset.mobilePageTarget;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+
+  mobilePageSections.forEach((section) => {
+    section.hidden = isMobile && section.dataset.mobilePage !== state.mobilePage;
+  });
+
+  if (state.mobilePage === "live") {
+    window.requestAnimationFrame(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+  }
+
+  if (updateHash) {
+    const nextHash = state.mobilePage === "overview" ? "" : `#${state.mobilePage}`;
+    const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
+    window.history.replaceState(null, "", nextUrl);
+  }
+
+  if (scroll && isMobile) {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+}
+
+function setMobilePage(page, options = {}) {
+  state.mobilePage = normalizeMobilePage(page);
+  syncMobilePages({ updateHash: true, ...options });
+}
 
 function normalizeVector(vector) {
   const length = Math.hypot(vector.x, vector.y, vector.z) || 1;
@@ -1140,6 +1188,31 @@ function wireFilters() {
   document.getElementById("refreshButton").addEventListener("click", runRefresh);
 }
 
+function wireMobilePages() {
+  mobilePageButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setMobilePage(button.dataset.mobilePageTarget);
+    });
+  });
+
+  const handleViewportChange = () => syncMobilePages({ updateHash: false });
+  if (typeof mobilePageMedia.addEventListener === "function") {
+    mobilePageMedia.addEventListener("change", handleViewportChange);
+  } else if (typeof mobilePageMedia.addListener === "function") {
+    mobilePageMedia.addListener(handleViewportChange);
+  }
+
+  window.addEventListener("hashchange", () => {
+    const nextPage = normalizeMobilePage(window.location.hash.replace("#", ""));
+    if (nextPage !== state.mobilePage) {
+      state.mobilePage = nextPage;
+      syncMobilePages({ updateHash: false });
+    }
+  });
+
+  syncMobilePages({ updateHash: false });
+}
+
 function startAutoCycle() {
   if (trackerEnabled && globe) {
     window.setInterval(() => {
@@ -1164,5 +1237,6 @@ function startAutoCycle() {
 
 renderSnapshotMode();
 wireFilters();
+wireMobilePages();
 startAutoCycle();
 loadSiteData().catch((error) => console.error(error));
