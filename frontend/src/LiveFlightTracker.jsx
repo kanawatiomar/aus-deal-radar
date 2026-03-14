@@ -22,6 +22,8 @@ const EARTH_RADIUS_KM = 6371;
 const KNOTS_PER_MPS = 1.94384;
 const FEET_PER_METER = 3.28084;
 const AUSTIN = { lat: 30.1945, lon: -97.6699 };
+const AIRCRAFT_FLOAT_FLOOR = 0.016;
+const AIRCRAFT_FLOAT_RANGE = 0.09;
 
 const PRESET_CONFIG = {
   world: {
@@ -102,19 +104,34 @@ function formatVerticalRate(verticalRateMps) {
   return `${feetPerMinute > 0 ? "+" : ""}${feetPerMinute.toLocaleString()} fpm`;
 }
 
-function altitudeRadius(altitudeMeters) {
-  return 1 + (((altitudeMeters || 0) / 1000) / EARTH_RADIUS_KM);
+function altitudeRadius(altitudeMeters, visualLift = 0) {
+  return 1 + (((altitudeMeters || 0) / 1000) / EARTH_RADIUS_KM) + visualLift;
 }
 
-function latLonToVector3(latitude, longitude, altitudeMeters = 0) {
+function aircraftFloatLift(altitudeMeters, emphasis = 1) {
+  const altitudeKm = Math.max(0, altitudeMeters || 0) / 1000;
+  const altitudeCurve = Math.pow(clamp(altitudeKm / 15, 0, 1.7), 0.84);
+  return clamp((AIRCRAFT_FLOAT_FLOOR + (altitudeCurve * AIRCRAFT_FLOAT_RANGE)) * emphasis, 0.01, 0.18);
+}
+
+function latLonToVector3(latitude, longitude, altitudeMeters = 0, visualLift = 0) {
   const lat = THREE.MathUtils.degToRad(latitude);
   const lon = THREE.MathUtils.degToRad(longitude);
-  const radius = altitudeRadius(altitudeMeters);
+  const radius = altitudeRadius(altitudeMeters, visualLift);
   const cosLat = Math.cos(lat);
   return new THREE.Vector3(
     radius * cosLat * Math.cos(lon),
     radius * Math.sin(lat),
     radius * cosLat * Math.sin(lon),
+  );
+}
+
+function latLonToFlightVector3(latitude, longitude, altitudeMeters = 0, emphasis = 1) {
+  return latLonToVector3(
+    latitude,
+    longitude,
+    altitudeMeters,
+    aircraftFloatLift(altitudeMeters, emphasis),
   );
 }
 
@@ -152,7 +169,11 @@ function buildDestinationPath(start, end) {
   const midpoint = bridge.lengthSq() > 0
     ? bridge.normalize()
     : start.clone().normalize();
-  const arcLift = clamp(midpoint.angleTo(end.clone().normalize()) * 0.46, 0.08, 0.34);
+  const arcLift = clamp(
+    ((Math.max(start.length(), end.length(), 1) - 1) * 1.35) + midpoint.angleTo(end.clone().normalize()) * 0.5,
+    0.14,
+    0.42,
+  );
   const controlPoint = midpoint.multiplyScalar(Math.max(start.length(), end.length(), 1) + arcLift);
   return new THREE.QuadraticBezierCurve3(start.clone(), controlPoint, end.clone()).getPoints(31);
 }
@@ -365,27 +386,51 @@ function Earth() {
 }
 
 function AustinBeacon() {
-  const groupRef = useRef(null);
+  const surfaceRef = useRef(null);
+  const floatRef = useRef(null);
   const basePosition = useMemo(() => latLonToVector3(AUSTIN.lat, AUSTIN.lon, 0), []);
+  const floatingPosition = useMemo(() => latLonToFlightVector3(AUSTIN.lat, AUSTIN.lon, 0, 1.12), []);
 
   useFrame(({ clock }) => {
-    if (groupRef.current) {
-      const pulse = 1 + Math.sin(clock.elapsedTime * 2.4) * 0.08;
-      groupRef.current.scale.setScalar(pulse);
+    const pulse = 1 + Math.sin(clock.elapsedTime * 2.4) * 0.08;
+    if (surfaceRef.current) {
+      surfaceRef.current.scale.setScalar(pulse);
+    }
+    if (floatRef.current) {
+      floatRef.current.scale.setScalar(pulse * 0.96);
     }
   });
 
   return (
-    <group ref={groupRef} position={basePosition}>
-      <mesh>
-        <sphereGeometry args={[0.011, 16, 16]} />
-        <meshBasicMaterial color="#ffffff" />
-      </mesh>
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.028, 0.0026, 12, 32]} />
-        <meshBasicMaterial color="#7fe5ff" transparent opacity={0.8} />
-      </mesh>
-    </group>
+    <>
+      <group ref={surfaceRef} position={basePosition}>
+        <mesh>
+          <sphereGeometry args={[0.011, 16, 16]} />
+          <meshBasicMaterial color="#ffffff" />
+        </mesh>
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.028, 0.0026, 12, 32]} />
+          <meshBasicMaterial color="#7fe5ff" transparent opacity={0.8} />
+        </mesh>
+      </group>
+      <Line
+        color="#7fe5ff"
+        lineWidth={1.15}
+        opacity={0.34}
+        points={[basePosition, floatingPosition]}
+        transparent
+      />
+      <group ref={floatRef} position={floatingPosition}>
+        <mesh>
+          <sphereGeometry args={[0.009, 16, 16]} />
+          <meshBasicMaterial color="#d9ffff" />
+        </mesh>
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.021, 0.0018, 12, 32]} />
+          <meshBasicMaterial color="#7fe5ff" transparent opacity={0.72} />
+        </mesh>
+      </group>
+    </>
   );
 }
 
@@ -410,8 +455,9 @@ function AircraftPoints({ aircraft, previousMap, receivedAt, pollMs, selectedIca
 
     aircraft.forEach((plane, index) => {
       const previous = previousMap.get(plane.icao24) || plane;
-      startVector.copy(latLonToVector3(previous.latitude, previous.longitude, previous.altitude_m || 0));
-      endVector.copy(latLonToVector3(plane.latitude, plane.longitude, plane.altitude_m || 0));
+      const emphasis = plane.icao24 === selectedIcao ? 1.08 : 0.5;
+      startVector.copy(latLonToFlightVector3(previous.latitude, previous.longitude, previous.altitude_m || 0, emphasis));
+      endVector.copy(latLonToFlightVector3(plane.latitude, plane.longitude, plane.altitude_m || 0, emphasis));
       currentVector.copy(startVector).lerp(endVector, interpolationProgress);
 
       const offset = index * 3;
@@ -477,8 +523,8 @@ function DestinationLine({ plane, previousPlane, receivedAt, pollMs, destination
       1,
     );
     const start = previousPlane || plane;
-    const startVector = latLonToVector3(start.latitude, start.longitude, start.altitude_m || 0);
-    const endVector = latLonToVector3(plane.latitude, plane.longitude, plane.altitude_m || 0);
+    const startVector = latLonToFlightVector3(start.latitude, start.longitude, start.altitude_m || 0, 1.24);
+    const endVector = latLonToFlightVector3(plane.latitude, plane.longitude, plane.altitude_m || 0, 1.24);
     const currentVector = startVector.lerp(endVector, interpolationProgress);
     const path = buildDestinationPath(currentVector, destinationPoint);
 
@@ -511,7 +557,7 @@ function SelectedAircraft({ plane, previousPlane, receivedAt, pollMs, trailPoint
   const groupRef = useRef(null);
   const tempMatrix = useMemo(() => new THREE.Matrix4(), []);
   const tempQuaternion = useMemo(() => new THREE.Quaternion(), []);
-  const destinationPoint = useMemo(() => latLonToVector3(AUSTIN.lat, AUSTIN.lon, 0), []);
+  const destinationPoint = useMemo(() => latLonToFlightVector3(AUSTIN.lat, AUSTIN.lon, 0, 1.12), []);
 
   useFrame(() => {
     if (!groupRef.current || !plane) {
@@ -524,8 +570,8 @@ function SelectedAircraft({ plane, previousPlane, receivedAt, pollMs, trailPoint
       1,
     );
     const start = previousPlane || plane;
-    const startVector = latLonToVector3(start.latitude, start.longitude, start.altitude_m || 0);
-    const endVector = latLonToVector3(plane.latitude, plane.longitude, plane.altitude_m || 0);
+    const startVector = latLonToFlightVector3(start.latitude, start.longitude, start.altitude_m || 0, 1.24);
+    const endVector = latLonToFlightVector3(plane.latitude, plane.longitude, plane.altitude_m || 0, 1.24);
     const currentVector = startVector.lerp(endVector, interpolationProgress);
     const basis = planeHeadingBasis(
       plane.latitude,
@@ -563,13 +609,22 @@ function SelectedAircraft({ plane, previousPlane, receivedAt, pollMs, trailPoint
         </mesh>
       </group>
       {trailPoints.length > 1 ? (
-        <Line
-          color="#ffb45f"
-          lineWidth={1.2}
-          opacity={0.8}
-          points={trailPoints}
-          transparent
-        />
+        <>
+          <Line
+            color="#ffb45f"
+            lineWidth={3.4}
+            opacity={0.12}
+            points={trailPoints}
+            transparent
+          />
+          <Line
+            color="#ffb45f"
+            lineWidth={1.35}
+            opacity={0.88}
+            points={trailPoints}
+            transparent
+          />
+        </>
       ) : null}
       <DestinationLine
         destinationPoint={destinationPoint}
@@ -578,7 +633,7 @@ function SelectedAircraft({ plane, previousPlane, receivedAt, pollMs, trailPoint
         previousPlane={previousPlane}
         receivedAt={receivedAt}
       />
-      <Html position={latLonToVector3(plane.latitude, plane.longitude, plane.altitude_m || 0).multiplyScalar(1.02)}>
+      <Html position={latLonToFlightVector3(plane.latitude, plane.longitude, plane.altitude_m || 0, 1.3).multiplyScalar(1.018)}>
         <div className="flight-tracker__label">
           <strong>{plane.callsign || plane.icao24.toUpperCase()}</strong>
           <span>{formatAltitude(plane.altitude_m)}</span>
@@ -742,7 +797,7 @@ export function LiveFlightTracker({ config }) {
 
     feed.current.aircraft.forEach((plane) => {
       seen.add(plane.icao24);
-      const nextPoint = latLonToVector3(plane.latitude, plane.longitude, plane.altitude_m || 0);
+      const nextPoint = latLonToFlightVector3(plane.latitude, plane.longitude, plane.altitude_m || 0, 1.16);
       const existing = history.get(plane.icao24) || [];
       existing.push(nextPoint.toArray());
       history.set(plane.icao24, existing.slice(-18));
