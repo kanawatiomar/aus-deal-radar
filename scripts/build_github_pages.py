@@ -195,7 +195,13 @@ async def export_live_aircraft() -> dict:
     settings = get_settings()
     service = OpenSkyService(settings)
     try:
-        payload = await service.snapshot(preset="world")
+        try:
+            payload = await service.snapshot(preset="world")
+        except Exception:
+            existing_snapshot = DATA_DIR / "live-aircraft.json"
+            if existing_snapshot.exists():
+                return json.loads(existing_snapshot.read_text(encoding="utf-8"))
+            raise
     finally:
         await service.close()
     return payload.model_dump(mode="json")

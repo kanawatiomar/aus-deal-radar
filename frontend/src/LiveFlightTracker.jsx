@@ -145,6 +145,18 @@ function haversineDistanceKm(aLat, aLon, bLat, bLon) {
   return 2 * EARTH_RADIUS_KM * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function buildDestinationPath(start, end) {
+  const startNormal = start.clone().normalize();
+  const endNormal = end.clone().normalize();
+  const bridge = startNormal.add(endNormal);
+  const midpoint = bridge.lengthSq() > 0
+    ? bridge.normalize()
+    : start.clone().normalize();
+  const arcLift = clamp(midpoint.angleTo(end.clone().normalize()) * 0.46, 0.08, 0.34);
+  const controlPoint = midpoint.multiplyScalar(Math.max(start.length(), end.length(), 1) + arcLift);
+  return new THREE.QuadraticBezierCurve3(start.clone(), controlPoint, end.clone()).getPoints(31);
+}
+
 function normalizeAircraft(state) {
   if (!Array.isArray(state) || state.length < 17) {
     return null;
@@ -450,10 +462,56 @@ function AircraftPoints({ aircraft, previousMap, receivedAt, pollMs, selectedIca
   );
 }
 
+function DestinationLine({ plane, previousPlane, receivedAt, pollMs, destinationPoint }) {
+  const geometryRef = useRef(null);
+  const positions = useMemo(() => new Float32Array(32 * 3), []);
+
+  useFrame(() => {
+    if (!geometryRef.current || !plane) {
+      return;
+    }
+
+    const interpolationProgress = clamp(
+      receivedAt ? (performance.now() - receivedAt) / pollMs : 1,
+      0,
+      1,
+    );
+    const start = previousPlane || plane;
+    const startVector = latLonToVector3(start.latitude, start.longitude, start.altitude_m || 0);
+    const endVector = latLonToVector3(plane.latitude, plane.longitude, plane.altitude_m || 0);
+    const currentVector = startVector.lerp(endVector, interpolationProgress);
+    const path = buildDestinationPath(currentVector, destinationPoint);
+
+    path.forEach((point, index) => {
+      const offset = index * 3;
+      positions[offset] = point.x;
+      positions[offset + 1] = point.y;
+      positions[offset + 2] = point.z;
+    });
+
+    geometryRef.current.setDrawRange(0, path.length);
+    geometryRef.current.attributes.position.needsUpdate = true;
+  });
+
+  return (
+    <line frustumCulled={false}>
+      <bufferGeometry ref={geometryRef}>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[positions, 3]}
+          usage={THREE.DynamicDrawUsage}
+        />
+      </bufferGeometry>
+      <lineBasicMaterial color="#74f4dd" opacity={0.8} transparent />
+    </line>
+  );
+}
+
 function SelectedAircraft({ plane, previousPlane, receivedAt, pollMs, trailPoints }) {
   const groupRef = useRef(null);
   const tempMatrix = useMemo(() => new THREE.Matrix4(), []);
   const tempQuaternion = useMemo(() => new THREE.Quaternion(), []);
+  const destinationPoint = useMemo(() => latLonToVector3(AUSTIN.lat, AUSTIN.lon, 0), []);
 
   useFrame(() => {
     if (!groupRef.current || !plane) {
@@ -513,6 +571,13 @@ function SelectedAircraft({ plane, previousPlane, receivedAt, pollMs, trailPoint
           transparent
         />
       ) : null}
+      <DestinationLine
+        destinationPoint={destinationPoint}
+        plane={plane}
+        pollMs={pollMs}
+        previousPlane={previousPlane}
+        receivedAt={receivedAt}
+      />
       <Html position={latLonToVector3(plane.latitude, plane.longitude, plane.altitude_m || 0).multiplyScalar(1.02)}>
         <div className="flight-tracker__label">
           <strong>{plane.callsign || plane.icao24.toUpperCase()}</strong>
@@ -798,6 +863,7 @@ export function LiveFlightTracker({ config }) {
                 ? `${selectedAircraft.origin_country} · ${formatAltitude(selectedAircraft.altitude_m)} · ${formatSpeed(selectedAircraft.velocity_mps)}`
                 : "The focus card updates when you pick an aircraft from the live list."}
             </p>
+            {selectedAircraft ? <p>Destination line anchored to AUS.</p> : null}
           </div>
 
           <div className="flight-tracker__aircraft-list">
