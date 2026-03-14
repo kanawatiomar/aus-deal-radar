@@ -212,6 +212,7 @@
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+  min-height: 0;
   padding: 16px;
   border-radius: 24px;
   border: 1px solid rgba(152, 208, 255, 0.08);
@@ -272,7 +273,9 @@
 
 .flight-tracker__aircraft-list {
   display: grid;
+  flex: 1;
   gap: 12px;
+  min-height: 0;
   max-height: 430px;
   overflow-y: auto;
   padding-right: 6px;
@@ -386,6 +389,31 @@
   background: rgba(3, 11, 18, 0.8);
   color: #dce8f3;
   backdrop-filter: blur(12px);
+}
+
+@media (min-width: 1180px) {
+  .flight-tracker {
+    min-height: 100%;
+    grid-template-rows: auto 1fr;
+  }
+
+  .flight-tracker__toolbar {
+    align-items: flex-start;
+  }
+
+  .flight-tracker__layout {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1.72fr) minmax(360px, 0.58fr);
+  }
+
+  .flight-tracker__stage,
+  .flight-tracker__sidebar {
+    height: 100%;
+  }
+
+  .flight-tracker__stage {
+    min-height: clamp(720px, calc(100vh - 170px), 940px);
+  }
 }
 
 @media (max-width: 1040px) {
